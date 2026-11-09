@@ -1,0 +1,10 @@
+{
+  "model": "CSRNet",
+  "checkpoint": "/content/drive/MyDrive/CrowdVision/models/csrnet/csrnet_partA_val_best.pth",
+  "dataset": "ShanghaiTech Part A test",
+  "test_images": 182,
+  "selected_epoch": 21,
+  "best_validation_MAE": 113.38,
+  "test_MAE": 89.15543635860904,
+  "test_RMSE": 132.61072869017949
+}

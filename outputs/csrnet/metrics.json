@@ -1,0 +1,9 @@
+{
+  "split": "ShanghaiTech Part A test",
+  "images": 182,
+  "MAE": 66.94206327920432,
+  "RMSE": 107.15068981210908,
+  "mean_ms_per_image": 191.38348396703665,
+  "checkpoint": "csrnet_a_external.pth",
+  "gpu": "Tesla T4"
+}

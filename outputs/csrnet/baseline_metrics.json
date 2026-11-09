@@ -1,0 +1,8 @@
+{
+  "model": "CSRNet",
+  "dataset": "ShanghaiTech Part A test",
+  "epochs": 30,
+  "MAE": 162.56407195919164,
+  "RMSE": 226.54146476206904,
+  "checkpoint": "/content/drive/MyDrive/CrowdVision/models/csrnet/csrnet_shanghaitech_a.pth"
+}

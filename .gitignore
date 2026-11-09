@@ -1,0 +1,43 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+datasets/images/*
+!datasets/images/.gitkeep
+datasets/videos/*
+!datasets/videos/.gitkeep
+outputs/images/*
+!outputs/images/.gitkeep
+outputs/videos/*
+!outputs/videos/.gitkeep
+models/yolo/*.pt
+
+.env
+.streamlit/secrets.toml
+# Dữ liệu và ảnh/video đầu vào
+datasets/*
+!datasets/**/
+!datasets/**/.gitkeep
+
+# Model weights và checkpoint
+/yolo11s.pt
+/models/**/*.pt
+/models/**/*.pth
+/models/**/*.pth.tar
+
+# Kết quả sinh ra khi chạy
+outputs/*
+!outputs/**/
+!outputs/**/.gitkeep
+
+# Cấu hình ROI trên máy cá nhân; giữ file mẫu
+/configs/zones.json
+
+# Môi trường và file tạm
+.idea/
+.ipynb_checkpoints/
+*.log
+*.tmp
+Thumbs.db
+.DS_Store

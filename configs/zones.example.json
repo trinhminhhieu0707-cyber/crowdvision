@@ -1,0 +1,16 @@
+{
+  "coordinate_system": "normalized_0_to_1",
+  "assignment_rule": "Use the tracked person's foot point (bottom-center of bounding box). A point on a polygon boundary is inside. If zones overlap or a point lies on multiple boundaries, the first matching zone in this file owns the track for that frame.",
+  "zones": [
+    {
+      "name": "Zone A",
+      "capacity": 10,
+      "polygon": [[0.05, 0.15], [0.45, 0.15], [0.45, 0.90], [0.05, 0.90]]
+    },
+    {
+      "name": "Zone B",
+      "capacity": 12,
+      "polygon": [[0.55, 0.15], [0.95, 0.15], [0.95, 0.90], [0.55, 0.90]]
+    }
+  ]
+}

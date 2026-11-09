@@ -1,0 +1,73 @@
+{
+  "dataset": "ShanghaiTech part_A test",
+  "images": 182,
+  "ground_truth": "number of head-point annotations in GT_*.mat",
+  "yolo_weights": "/content/drive/MyDrive/CrowdVision/yolo11s.pt",
+  "csrnet_weights": "/content/drive/MyDrive/CrowdVision/models/csrnet/PartAmodel_best.pth.tar",
+  "yolo": {
+    "MAE": 430.75274725274727,
+    "RMSE": 557.6458415655806,
+    "bias": -430.75274725274727,
+    "mean_inference_ms_per_image": 16.818502994500715,
+    "throughput_fps": 59.45832398561146
+  },
+  "csrnet": {
+    "MAE": 66.94206221025068,
+    "RMSE": 107.15068667068095,
+    "bias": -19.684580624758542,
+    "mean_inference_ms_per_image": 100.10269547802302,
+    "throughput_fps": 9.98974098773938
+  },
+  "density_groups": [
+    {
+      "density_group_people": "<200",
+      "images": 43,
+      "mean_ground_truth": 144.65116279069767,
+      "yolo_MAE": 141.2093023255814,
+      "yolo_RMSE": 146.84115765477793,
+      "yolo_bias": -141.2093023255814,
+      "csrnet_MAE": 27.097519985465116,
+      "csrnet_RMSE": 36.591370320800465,
+      "csrnet_bias": 3.480882156726926
+    },
+    {
+      "density_group_people": "200-499",
+      "images": 93,
+      "mean_ground_truth": 323.6559139784946,
+      "yolo_MAE": 320.5268817204301,
+      "yolo_RMSE": 332.53508182620567,
+      "yolo_bias": -320.5268817204301,
+      "csrnet_MAE": 50.61351587439096,
+      "csrnet_RMSE": 67.68634234522399,
+      "csrnet_bias": -1.8437391711819557
+    },
+    {
+      "density_group_people": "500-999",
+      "images": 27,
+      "mean_ground_truth": 678.5555555555555,
+      "yolo_MAE": 674.6666666666666,
+      "yolo_RMSE": 689.573835114177,
+      "yolo_bias": -674.6666666666666,
+      "csrnet_MAE": 91.62920803493924,
+      "csrnet_RMSE": 120.60074879580404,
+      "csrnet_bias": -29.082965992115163
+    },
+    {
+      "density_group_people": ">=1000",
+      "images": 19,
+      "mean_ground_truth": 1280.4736842105262,
+      "yolo_MAE": 1278.9473684210527,
+      "yolo_RMSE": 1308.804798279713,
+      "yolo_bias": -1278.9473684210527,
+      "csrnet_MAE": 201.95875629625823,
+      "csrnet_RMSE": 252.6950057515562,
+      "csrnet_bias": -146.0823043020148
+    }
+  ],
+  "notes": [
+    "Both models were evaluated on the same image files and point-count ground truth.",
+    "YOLO count is the number of person detections after NMS; CSRNet count is the sum of its density output.",
+    "Inference time excludes image file reading and model initialization; it includes model preprocessing and prediction.",
+    "Count metrics do not identify object-level false positives or false negatives without a declared point-to-box matching protocol."
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "mode": "image",
+  "input": "datasets\\images\\spain.jpg",
+  "estimated_count": 59.449432373046875,
+  "device": "cpu",
+  "checkpoint": "models\\csrnet\\PartAmodel_best.pth.tar",
+  "dense_regions": [
+    {
+      "x1": 80,
+      "y1": 0,
+      "x2": 161,
+      "y2": 49,
+      "estimated_count": 19.172542572021484
+    },
+    {
+      "x1": 161,
+      "y1": 49,
+      "x2": 241,
+      "y2": 106,
+      "estimated_count": 12.601300239562988
+    },
+    {
+      "x1": 80,
+      "y1": 49,
+      "x2": 161,
+      "y2": 106,
+      "estimated_count": 9.707167625427246
+    }
+  ],
+  "outputs": {
+    "overlay": "D:\\AI\\CrowdVision\\outputs\\crowd_density\\spain\\density_overlay.jpg",
+    "regions": "D:\\AI\\CrowdVision\\outputs\\crowd_density\\spain\\dense_regions.jpg",
+    "heatmap": "D:\\AI\\CrowdVision\\outputs\\crowd_density\\spain\\density_heatmap.jpg"
+  }
+}
