@@ -16,7 +16,7 @@ from src.crowd_counting import CSRNetCounter
 from src.crowd_counting.analysis import draw_dense_regions, find_dense_regions, overlay_density
 from src.crowd_counting.video import analyze_video_density
 
-
+##c
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze crowd density with CSRNet, independently of YOLO tracking.")
     parser.add_argument("--mode", choices=["image", "video"], required=True)
