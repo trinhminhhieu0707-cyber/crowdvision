@@ -10,7 +10,8 @@ from typing import Any
 import cv2
 import numpy as np
 
-from src.tracking.tracker import PersonTracker, TrackedPerson, draw_tracks
+from src.tracking.tracker import TrackedPerson, Tracker, draw_tracks
+from src.video_io import open_video, open_writer
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,7 @@ def load_zones(config_path: str | Path) -> list[Zone]:
     return zones
 
 
-def _assign_tracks(
+def assign_tracks(
     tracks: list[TrackedPerson], zones: list[Zone], width: int, height: int
 ) -> dict[str, set[int]]:
     """Assign each track by footpoint; overlapping/boundary matches go to first config zone."""
@@ -80,85 +81,100 @@ def _assign_tracks(
     return occupants
 
 
+_assign_tracks = assign_tracks  # alias tương thích ngược với tên cũ
+
+
+
 def process_zone_video(
-    tracker: PersonTracker,
+    tracker: Tracker,
     input_path: str | Path,
     output_path: str | Path,
     zones: list[Zone],
     near_full_ratio: float = 0.8,
+
+    alert_min_seconds: float = 1.0,
+    alert_clear_seconds: float = 1.0,
 ) -> ZoneVideoSummary:
     """Track people in a video, assign each current Track ID to at most one zone, and save outputs."""
     input_path, output_path = Path(input_path), Path(output_path)
-    if not input_path.is_file():
-        raise FileNotFoundError(f"Input video does not exist: {input_path}")
     if not zones:
         raise ValueError("At least one zone is required.")
     if not 0 < near_full_ratio <= 1:
         raise ValueError("near_full_ratio must be greater than 0 and at most 1.")
+    ## [SỬA 3b | zone_monitor.py | process_zone_video] Validate 2 tham số mới.
+    if alert_min_seconds < 0 or alert_clear_seconds < 0:
+        raise ValueError("alert_min_seconds and alert_clear_seconds must be >= 0.")
 
-    capture = cv2.VideoCapture(str(input_path))
-    if not capture.isOpened():
-        raise ValueError(f"OpenCV could not open the video: {input_path}")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path = output_path.with_name(f"{output_path.stem}_occupancy.csv")
     alerts_path = output_path.with_name(f"{output_path.stem}_alerts.csv")
-    try:
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        if width <= 0 or height <= 0:
-            raise ValueError(f"Video has invalid dimensions: {input_path}")
-        writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        if not writer.isOpened():
-            raise OSError(f"Could not create output video: {output_path}")
+    occupancy_rows: list[dict[str, Any]] = []
+    alert_rows: list[dict[str, Any]] = []
 
-        occupancy_rows: list[dict[str, Any]] = []
-        alert_rows: list[dict[str, Any]] = []
-        previous_status = {zone.name: "normal" for zone in zones}
+    with open_video(input_path) as (capture, info), open_writer(
+        output_path, info.fps, (info.width, info.height)
+    ) as writer:
+        width, height, fps = info.width, info.height, info.fps
+        ## [SỬA 2d | zone_monitor.py | process_zone_video] Reset tracker trước mỗi video mới (xem SỬA 2a).
+        tracker.reset()
+
         final_occupancy = {zone.name: 0 for zone in zones}
+
+        alert_min_frames = max(1, round(alert_min_seconds * fps))
+        alert_clear_frames = max(1, round(alert_clear_seconds * fps))
+        over_streak = {zone.name: 0 for zone in zones}
+        clear_streak = {zone.name: 0 for zone in zones}
+        alerting = {zone.name: False for zone in zones}
         processed = 0
         elapsed_total = 0.0
-        try:
-            while True:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-                started = perf_counter()
-                tracks = tracker.track(frame)
-                occupants = _assign_tracks(tracks, zones, width, height)
-                timestamp = processed / fps
-                for zone in zones:
-                    count = len(occupants[zone.name])
-                    rate = count / zone.capacity * 100.0
-                    status = "over_capacity" if count > zone.capacity else (
-                        "near_full" if rate >= near_full_ratio * 100 else "normal"
-                    )
-                    final_occupancy[zone.name] = count
-                    occupancy_rows.append({
-                        "frame": processed, "timestamp_seconds": round(timestamp, 3),
-                        "zone": zone.name, "occupancy": count, "capacity": zone.capacity,
-                        "occupancy_rate_percent": round(rate, 2), "status": status,
-                    })
-                    if status == "over_capacity" and previous_status[zone.name] != "over_capacity":
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            started = perf_counter()
+            tracks = tracker.track(frame)
+            occupants = assign_tracks(tracks, zones, width, height)
+            timestamp = processed / fps
+            for zone in zones:
+                count = len(occupants[zone.name])
+                rate = count / zone.capacity * 100.0
+                status = "over_capacity" if count > zone.capacity else (
+                    "near_full" if rate >= near_full_ratio * 100 else "normal"
+                )
+                final_occupancy[zone.name] = count
+                occupancy_rows.append({
+                    "frame": processed, "timestamp_seconds": round(timestamp, 3),
+                    "zone": zone.name, "occupancy": count, "capacity": zone.capacity,
+                    "occupancy_rate_percent": round(rate, 2), "status": status,
+                })
+
+                if status == "over_capacity":
+                    over_streak[zone.name] += 1
+                    clear_streak[zone.name] = 0
+                    if not alerting[zone.name] and over_streak[zone.name] >= alert_min_frames:
+                        alerting[zone.name] = True
                         alert_rows.append({
                             "frame": processed, "timestamp_seconds": round(timestamp, 3),
+                            "first_exceeded_frame": processed - over_streak[zone.name] + 1,
                             "zone": zone.name, "occupancy": count, "capacity": zone.capacity,
                             "message": f"{zone.name} exceeded capacity ({count}/{zone.capacity})",
                         })
-                    previous_status[zone.name] = status
+                else:
+                    over_streak[zone.name] = 0
+                    if alerting[zone.name]:
+                        clear_streak[zone.name] += 1
+                        if clear_streak[zone.name] >= alert_clear_frames:
+                            alerting[zone.name] = False
+                            clear_streak[zone.name] = 0
 
-                annotated = draw_tracks(frame, tracks)
-                _draw_zones(annotated, zones, occupants, near_full_ratio)
-                elapsed_total += perf_counter() - started
-                writer.write(annotated)
-                processed += 1
-        finally:
-            writer.release()
-    finally:
-        capture.release()
+            annotated = draw_tracks(frame, tracks)
+            _draw_zones(annotated, zones, occupants, near_full_ratio)
+            elapsed_total += perf_counter() - started
+            writer.write(annotated)
+            processed += 1
 
     _write_csv(csv_path, occupancy_rows, ["frame", "timestamp_seconds", "zone", "occupancy", "capacity", "occupancy_rate_percent", "status"])
-    _write_csv(alerts_path, alert_rows, ["frame", "timestamp_seconds", "zone", "occupancy", "capacity", "message"])
+
+    _write_csv(alerts_path, alert_rows, ["frame", "timestamp_seconds", "first_exceeded_frame", "zone", "occupancy", "capacity", "message"])
     return ZoneVideoSummary(
         input_path, output_path, csv_path, alerts_path, processed, float(fps),
         processed / elapsed_total if elapsed_total else 0.0, final_occupancy,

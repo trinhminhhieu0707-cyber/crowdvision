@@ -41,3 +41,4 @@ outputs/*
 *.tmp
 Thumbs.db
 .DS_Store
+.pytest_tmp/

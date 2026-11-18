@@ -7,6 +7,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import cv2
@@ -39,6 +40,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--confidence", type=float, default=0.35)
     parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--image-size", type=int, default=640)
+    parser.add_argument("--yolo-tile-size", type=int, default=0,
+                        help="Tile size in pixels for tiled YOLO inference; 0 disables tiling.")
+    parser.add_argument("--yolo-tile-overlap", type=float, default=0.25,
+                        help="Overlap ratio between tiles when tiling is enabled.")
     parser.add_argument("--visual-examples", type=int, default=6,
                         help="Save comparison images for the largest combined errors; set 0 to skip.")
     return parser.parse_args()
@@ -91,7 +96,8 @@ def density_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def save_visual_examples(
     rows: list[dict[str, Any]], image_dir: Path, output_dir: Path,
-    detector: PersonDetector, csrnet: CSRNetCounter, limit: int,
+
+    detect_fn: Callable[[np.ndarray], list], csrnet: CSRNetCounter, limit: int,
 ) -> None:
     if limit <= 0:
         return
@@ -107,7 +113,7 @@ def save_visual_examples(
         bgr = cv2.imread(str(path))
         if bgr is None:
             continue
-        detections = detector.detect(bgr)
+        detections = detect_fn(bgr)
         yolo_view = draw_detections(bgr, detections)
         csr_prediction = csrnet.predict_rgb(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
         csr_view = overlay_density(bgr, csr_prediction.density_map)
@@ -149,14 +155,18 @@ def main() -> None:
         device=args.device,
     )
     csrnet = CSRNetCounter(args.csrnet_weights, device=args.device)
+    if args.yolo_tile_size > 0:
+        def detect_yolo(image: np.ndarray) -> list:
+            return detector.detect_tiled(image, tile_size=args.yolo_tile_size, overlap=args.yolo_tile_overlap)
+    else:
+        detect_yolo = detector.detect
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Warm up both networks so first-use setup does not distort timing averages.
     first_bgr = cv2.imread(str(image_paths[0]))
     if first_bgr is None:
         raise ValueError(f"Could not decode image: {image_paths[0]}")
-    detector.detect(first_bgr)
+    detect_yolo(first_bgr)
     csrnet.predict_rgb(cv2.cvtColor(first_bgr, cv2.COLOR_BGR2RGB))
 
     rows: list[dict[str, Any]] = []
@@ -167,7 +177,7 @@ def main() -> None:
         truth = ground_truth_count(annotation_dir / f"GT_{image_path.stem}.mat")
 
         start = time.perf_counter()
-        detections = detector.detect(image)
+        detections = detect_yolo(image)
         yolo_ms = (time.perf_counter() - start) * 1000
 
         start = time.perf_counter()
@@ -209,6 +219,14 @@ def main() -> None:
         "images": len(rows),
         "ground_truth": "number of head-point annotations in GT_*.mat",
         "yolo_weights": str(args.yolo_weights),
+
+        "yolo_settings": {
+            "confidence": args.confidence,
+            "iou": args.iou,
+            "image_size": args.image_size,
+            "tile_size": args.yolo_tile_size,
+            "tile_overlap": args.yolo_tile_overlap if args.yolo_tile_size > 0 else None,
+        },
         "csrnet_weights": str(args.csrnet_weights),
         "yolo": metric_summary(rows, "yolo_count", "yolo_inference_ms"),
         "csrnet": metric_summary(rows, "csrnet_count", "csrnet_inference_ms"),
@@ -222,7 +240,7 @@ def main() -> None:
     }
     metrics_path = output_dir / "frame_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    save_visual_examples(rows, image_dir, output_dir, detector, csrnet, args.visual_examples)
+    save_visual_examples(rows, image_dir, output_dir, detect_yolo, csrnet, args.visual_examples)
 
     print(json.dumps(metrics, indent=2))
     logging.info("Saved per-image predictions: %s", csv_path)

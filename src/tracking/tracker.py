@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, Protocol
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+from src.video_io import open_video, open_writer
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,15 @@ class TrackingVideoSummary:
     average_processing_fps: float
 
 
+## [SỬA 8a | tracker.py | class mới Tracker] Protocol mô tả "thứ gì có track() và reset()".
+## Giúp các hàm process_* nhận cả PersonTracker thật lẫn tracker giả khi test, và hết cảnh báo
+## "Expected type 'PersonTracker', got '_ScriptedTracker'" trong PyCharm.
+class Tracker(Protocol):
+    def track(self, frame: np.ndarray) -> list[TrackedPerson]: ...
+
+    def reset(self) -> None: ...
+
+
 class PersonTracker:
     """Associates person detections across consecutive video frames with ByteTrack."""
 
@@ -39,6 +50,7 @@ class PersonTracker:
         iou_threshold: float = 0.45,
         image_size: int = 640,
         device: str | None = None,
+        low_confidence_threshold: float = 0.1,
     ) -> None:
         if not 0.0 <= confidence_threshold <= 1.0:
             raise ValueError("confidence_threshold must be between 0 and 1.")
@@ -46,8 +58,17 @@ class PersonTracker:
             raise ValueError("iou_threshold must be between 0 and 1.")
         if image_size <= 0:
             raise ValueError("image_size must be positive.")
+        ## [SỬA 1b | tracker.py | __init__] Validate tham số mới.
+        if not 0.0 <= low_confidence_threshold <= 1.0:
+            raise ValueError("low_confidence_threshold must be between 0 and 1.")
 
         self.confidence_threshold = confidence_threshold
+        ## [SỬA 1c | tracker.py | __init__] Lưu 2 ngưỡng riêng biệt:
+        ##   - confidence_threshold : ngưỡng HIỂN THỊ/ĐẾM (giữ nguyên ý nghĩa cũ, mặc định 0.35)
+        ##   - _tracker_conf        : ngưỡng đưa vào YOLO -> ByteTrack (thấp hơn, mặc định 0.1)
+        ## min(...) đảm bảo ngưỡng cho tracker không bao giờ cao hơn ngưỡng hiển thị.
+        self.low_confidence_threshold = low_confidence_threshold
+        self._tracker_conf = min(low_confidence_threshold, confidence_threshold)
         self.iou_threshold = iou_threshold
         self.image_size = image_size
         self.device = device
@@ -63,7 +84,11 @@ class PersonTracker:
             persist=True,
             tracker="bytetrack.yaml",
             classes=[self.person_class_id],
-            conf=self.confidence_threshold,
+            ## [SỬA 1d | tracker.py | track()] TRƯỚC: conf=self.confidence_threshold (0.35).
+            ## Lọc 0.35 ngay tại YOLO khiến ByteTrack không còn thấy các box điểm thấp (0.1-0.35),
+            ## trong khi bước "ghép lần 2" của ByteTrack cần chính các box đó để giữ ID khi bị che.
+            ## SAU: đưa ngưỡng thấp vào tracker, rồi lọc lại để hiển thị ở bước 1e bên dưới.
+            conf=self._tracker_conf,
             iou=self.iou_threshold,
             imgsz=self.image_size,
             device=self.device,
@@ -88,7 +113,18 @@ class PersonTracker:
             for (x1, y1, x2, y2), confidence, track_id in zip(
                 boxes, confidences, track_ids, strict=True
             )
+            ## [SỬA 1e | tracker.py | track()] Lọc đầu ra theo ngưỡng hiển thị cũ (0.35):
+            ## video/đếm người trông giống trước, nhưng ID bên trong tracker ổn định hơn.
+            ## (Box điểm thấp vẫn giúp giữ ID nhưng không bị vẽ/đếm.)
+            if float(confidence) >= self.confidence_threshold
         ]
+
+    ## [SỬA 2a | tracker.py | method mới reset()] Xoá trạng thái ByteTrack giữa 2 video.
+    ## Vì track(persist=True), nếu dùng lại 1 PersonTracker cho video khác thì ID/track cũ bị mang sang.
+    ## Đặt predictor=None để Ultralytics tạo tracker mới ở lần track() kế tiếp
+    ## (cách này không phụ thuộc cấu trúc nội bộ của từng phiên bản ultralytics).
+    def reset(self) -> None:
+        self.model.predictor = None
 
     def _find_person_class_id(self) -> int:
         names: Any = self.model.names
@@ -98,8 +134,10 @@ class PersonTracker:
         raise ValueError("The selected YOLO weights do not contain a 'person' class.")
 
 
+## [SỬA 6c | tracker.py | process_tracking_video] Viết lại bằng open_video/open_writer (SỬA 6a):
+## bỏ ~30 dòng mở/kiểm tra/release lặp lại; logic xử lý từng frame GIỮ NGUYÊN.
 def process_tracking_video(
-    tracker: PersonTracker,
+    tracker: Tracker,
     input_path: str | Path,
     output_path: str | Path,
 ) -> TrackingVideoSummary:
@@ -107,53 +145,29 @@ def process_tracking_video(
 
     input_path = Path(input_path)
     output_path = Path(output_path)
-    if not input_path.is_file():
-        raise FileNotFoundError(f"Input video does not exist: {input_path}")
 
-    capture = cv2.VideoCapture(str(input_path))
-    if not capture.isOpened():
-        raise ValueError(f"OpenCV could not open the video: {input_path}")
+    with open_video(input_path) as (capture, info), open_writer(
+        output_path, info.fps, (info.width, info.height)
+    ) as writer:
+        ## [SỬA 2b | tracker.py | process_tracking_video] Reset tracker trước mỗi video mới.
+        tracker.reset()
 
-    try:
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        source_fps = capture.get(cv2.CAP_PROP_FPS)
-        if width <= 0 or height <= 0:
-            raise ValueError(f"Video has invalid dimensions: {input_path}")
-        if source_fps <= 0:
-            source_fps = 25.0
+        processed_frames = 0
+        total_processing_seconds = 0.0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = cv2.VideoWriter(
-            str(output_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            source_fps,
-            (width, height),
-        )
-        if not writer.isOpened():
-            raise OSError(f"OpenCV could not create the output video: {output_path}")
+            frame_started_at = perf_counter()
+            tracks = tracker.track(frame)
+            annotated = draw_tracks(frame, tracks)
+            elapsed_seconds = perf_counter() - frame_started_at
+            total_processing_seconds += elapsed_seconds
+            processed_frames += 1
 
-        try:
-            processed_frames = 0
-            total_processing_seconds = 0.0
-            while True:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-
-                frame_started_at = perf_counter()
-                tracks = tracker.track(frame)
-                annotated = draw_tracks(frame, tracks)
-                elapsed_seconds = perf_counter() - frame_started_at
-                total_processing_seconds += elapsed_seconds
-                processed_frames += 1
-
-                _draw_processing_fps(annotated, elapsed_seconds)
-                writer.write(annotated)
-        finally:
-            writer.release()
-    finally:
-        capture.release()
+            _draw_processing_fps(annotated, elapsed_seconds)
+            writer.write(annotated)
 
     average_processing_fps = (
         processed_frames / total_processing_seconds if total_processing_seconds > 0 else 0.0
@@ -162,7 +176,7 @@ def process_tracking_video(
         input_path=input_path,
         output_path=output_path,
         processed_frames=processed_frames,
-        source_fps=source_fps,
+        source_fps=info.fps,
         average_processing_fps=average_processing_fps,
     )
 

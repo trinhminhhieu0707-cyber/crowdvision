@@ -22,6 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--image-size", type=int, default=640)
     parser.add_argument("--near-full-ratio", type=float, default=0.8, help="Near-full threshold, e.g. 0.8 means 80%% of capacity.")
+    parser.add_argument("--alert-min-seconds", type=float, default=1.0, help="Seconds over capacity before an alert fires.")
+    parser.add_argument("--alert-clear-seconds", type=float, default=1.0, help="Seconds below capacity before alerts can re-arm.")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -37,7 +39,9 @@ def main() -> None:
         device=args.device,
     )
     summary = process_zone_video(
-        tracker, args.input, args.output, zones, near_full_ratio=args.near_full_ratio
+        tracker, args.input, args.output, zones, near_full_ratio=args.near_full_ratio,
+        alert_min_seconds=args.alert_min_seconds,
+        alert_clear_seconds=args.alert_clear_seconds,
     )
     logging.info(
         "Processed %d frames (%.1f FPS). Final zone occupancy: %s. Video: %s | CSV: %s | alerts: %s",

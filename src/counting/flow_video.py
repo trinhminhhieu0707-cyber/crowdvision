@@ -6,7 +6,8 @@ from time import perf_counter
 
 import cv2
 
-from src.tracking.tracker import PersonTracker, draw_tracks
+from src.tracking.tracker import Tracker, draw_tracks
+from src.video_io import open_video, open_writer
 
 from .line_counter import CrossingCounts, LineCounter
 
@@ -21,8 +22,9 @@ class FlowVideoSummary:
     counts: CrossingCounts
 
 
+
 def process_flow_video(
-    tracker: PersonTracker,
+    tracker: Tracker,
     input_path: str | Path,
     output_path: str | Path,
     line_y: int | None = None,
@@ -36,20 +38,9 @@ def process_flow_video(
 
     input_path = Path(input_path)
     output_path = Path(output_path)
-    if not input_path.is_file():
-        raise FileNotFoundError(f"Input video does not exist: {input_path}")
 
-    capture = cv2.VideoCapture(str(input_path))
-    if not capture.isOpened():
-        raise ValueError(f"OpenCV could not open the video: {input_path}")
-
-    try:
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        source_fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        if width <= 0 or height <= 0:
-            raise ValueError(f"Video has invalid dimensions: {input_path}")
+    with open_video(input_path) as (capture, info):
+        width, height, source_fps = info.width, info.height, info.fps
         if (line_y is None) == (line_x is None):
             raise ValueError("Provide exactly one of line_y or line_x.")
         if line_y is not None and not 0 <= line_y < height:
@@ -59,22 +50,17 @@ def process_flow_video(
         if start_second < 0 or (end_second is not None and end_second <= start_second):
             raise ValueError("Use start_second >= 0 and end_second > start_second.")
         start_frame = int(round(start_second * source_fps))
-        end_frame = int(round(end_second * source_fps)) if end_second is not None else frame_count
-        if start_frame >= frame_count or end_frame <= start_frame:
+        end_frame = int(round(end_second * source_fps)) if end_second is not None else info.frame_count
+        if start_frame >= info.frame_count or end_frame <= start_frame:
             raise ValueError("Selected time range contains no video frames.")
         capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = cv2.VideoWriter(
-            str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), source_fps, (width, height)
-        )
-        if not writer.isOpened():
-            raise OSError(f"OpenCV could not create the output video: {output_path}")
+        tracker.reset()
 
         counter = LineCounter(line_y=line_y, line_x=line_x, crossing_margin=crossing_margin)
         processed_frames = 0
         total_processing_seconds = 0.0
-        try:
+        with open_writer(output_path, source_fps, (width, height)) as writer:
             while True:
                 ok, frame = capture.read()
                 if not ok or int(capture.get(cv2.CAP_PROP_POS_FRAMES)) > end_frame:
@@ -88,10 +74,6 @@ def process_flow_video(
                 processed_frames += 1
                 _draw_flow_overlay(annotated, line_y, line_x, counts, elapsed_seconds)
                 writer.write(annotated)
-        finally:
-            writer.release()
-    finally:
-        capture.release()
 
     return FlowVideoSummary(
         input_path=input_path,

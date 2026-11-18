@@ -8,6 +8,8 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from src.video_io import open_video, open_writer
+
 from .detector import Detection, draw_detections
 
 
@@ -33,57 +35,30 @@ def process_video(
 
     input_path = Path(input_path)
     output_path = Path(output_path)
-    if not input_path.is_file():
-        raise FileNotFoundError(f"Input video does not exist: {input_path}")
 
-    capture = cv2.VideoCapture(str(input_path))
-    if not capture.isOpened():
-        raise ValueError(f"OpenCV could not open the video: {input_path}")
+    with open_video(input_path) as (capture, info), open_writer(
+        output_path, info.fps, (info.width, info.height)
+    ) as writer:
+        processed_frames = 0
+        total_processing_seconds = 0.0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
 
-    try:
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        source_fps = capture.get(cv2.CAP_PROP_FPS)
-        if width <= 0 or height <= 0:
-            raise ValueError(f"Video has invalid dimensions: {input_path}")
-        if source_fps <= 0:
-            source_fps = 25.0
+            frame_started_at = perf_counter()
+            detections = detector.detect(frame)
+            annotated = draw_detections(frame, detections)
+            elapsed_seconds = perf_counter() - frame_started_at
+            total_processing_seconds += elapsed_seconds
+            processed_frames += 1
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = cv2.VideoWriter(
-            str(output_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            source_fps,
-            (width, height),
-        )
-        if not writer.isOpened():
-            raise OSError(f"OpenCV could not create the output video: {output_path}")
-
-        try:
-            processed_frames = 0
-            total_processing_seconds = 0.0
-            while True:
-                ok, frame = capture.read()
-                if not ok:
-                    break
-
-                frame_started_at = perf_counter()
-                detections = detector.detect(frame)
-                annotated = draw_detections(frame, detections)
-                elapsed_seconds = perf_counter() - frame_started_at
-                total_processing_seconds += elapsed_seconds
-                processed_frames += 1
-
-                _draw_video_metrics(
-                    annotated,
-                    processing_fps=1.0 / elapsed_seconds if elapsed_seconds > 0 else 0.0,
-                    source_fps=source_fps,
-                )
-                writer.write(annotated)
-        finally:
-            writer.release()
-    finally:
-        capture.release()
+            _draw_video_metrics(
+                annotated,
+                processing_fps=1.0 / elapsed_seconds if elapsed_seconds > 0 else 0.0,
+                source_fps=info.fps,
+            )
+            writer.write(annotated)
 
     average_processing_fps = (
         processed_frames / total_processing_seconds if total_processing_seconds > 0 else 0.0
@@ -92,7 +67,7 @@ def process_video(
         input_path=input_path,
         output_path=output_path,
         processed_frames=processed_frames,
-        source_fps=source_fps,
+        source_fps=info.fps,
         average_processing_fps=average_processing_fps,
     )
 

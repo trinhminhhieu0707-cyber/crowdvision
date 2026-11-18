@@ -6,6 +6,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from src.video_io import open_video, open_writer
+
 from .analysis import annotate_density_frame, find_dense_regions
 from .csrnet import CSRNetCounter
 
@@ -40,6 +42,7 @@ def _save_count_trend(rows: list[dict[str, float]], destination: Path) -> None:
     cv2.imwrite(str(destination), canvas)
 
 
+
 def analyze_video_density(
     video_path: str | Path,
     output_dir: str | Path,
@@ -51,22 +54,10 @@ def analyze_video_density(
 ) -> dict[str, Path | int | float]:
     """Estimate crowd density on sampled frames; this does not track people."""
     video_path, output_dir = Path(video_path), Path(output_dir)
-    if not video_path.is_file():
-        raise FileNotFoundError(f"Input video does not exist: {video_path}")
     if sample_every < 1:
         raise ValueError("sample_every must be at least 1.")
     output_dir.mkdir(parents=True, exist_ok=True)
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise ValueError(f"OpenCV could not open the video: {video_path}")
-    fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     writer_path = output_dir / f"{video_path.stem}_density.mp4"
-    writer = cv2.VideoWriter(str(writer_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    if not writer.isOpened():
-        capture.release()
-        raise OSError(f"Could not create output video: {writer_path}")
 
     csv_path = output_dir / "density_counts.csv"
     chart_path = output_dir / "density_trend.png"
@@ -75,7 +66,10 @@ def analyze_video_density(
     last_prediction = None
     last_regions = []
     last_sample_time = 0.0
-    try:
+    with open_video(video_path) as (capture, info), open_writer(
+        writer_path, info.fps, (info.width, info.height)
+    ) as writer:
+        fps, width, height = info.fps, info.width, info.height
         while True:
             ok, frame = capture.read()
             if not ok:
@@ -93,9 +87,6 @@ def analyze_video_density(
             if last_prediction is not None:
                 writer.write(annotate_density_frame(frame, last_prediction, last_regions, last_sample_time))
             frame_index += 1
-    finally:
-        capture.release()
-        writer.release()
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer_csv = csv.DictWriter(f, fieldnames=["frame", "timestamp_seconds", "estimated_count"])
